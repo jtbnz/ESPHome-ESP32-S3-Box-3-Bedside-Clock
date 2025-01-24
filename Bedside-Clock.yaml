@@ -127,7 +127,7 @@ sensor:
         - lvgl.label.update:
             id: lbl_lux
             text:
-              format: "LUX:  %f"
+              format: "LUX:  %.0f"
               args: "x"
 
     
