@@ -1,0 +1,544 @@
+esphome:
+  name: bedroom-s3-clock
+  friendly_name: Bedroom S3 clock
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: ""
+
+ota:
+  - platform: esphome
+    password: ""
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Bedroom-S3-Clock"
+    password: "ifxExRO5kTm8"
+
+captive_portal:
+
+    
+
+font:
+  - file:
+      type: gfonts
+      family: JetBrains+Mono
+      weight: 700
+    id: yfont
+    size: 88
+  - file:
+      type: gfonts
+      family: JetBrains+Mono
+    id: info_font
+    size: 22 
+  - file:
+      type: gfonts
+      family: JetBrains+Mono
+    id: weather_font
+    size: 40        
+  - file: "gfonts://Material+Symbols+Outlined"
+    id: icons_50
+    size: 50
+    glyphs: [
+      "\U0000f02a", # light
+      "\U0000e2b4", # bed light
+      "\U0000ec18", # heat pump
+      "\U0000e828", # electric blanket
+      ] 
+
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+    on_time_sync:
+      - script.execute: time_update
+    on_time:
+      - minutes: '*'
+        seconds: 0
+        then:
+          - script.execute: time_update
+spi:
+  clk_pin: GPIO07
+  mosi_pin: GPIO06 
+
+
+i2c:
+  - id: i2c_bus
+    sda: GPIO08
+    scl: GPIO18
+    scan: false
+    frequency: 100kHz
+  - id: i2c_bus_ext
+    sda: GPIO12
+    scl: GPIO11
+    scan: false
+    frequency: 50kHz
+
+sensor:
+  - platform: dht
+    pin: GPIO41
+    temperature:
+      name: "Bedroom Clock Temperature"
+      on_value:
+       then:    
+        - lvgl.label.update:
+            id: lbl_temp
+            text:
+              format: "TEMP: %.0f°C"
+              args: [ 'x' ]
+    humidity:
+      name: "Bedroom Clock Humidity"
+      on_value:
+       then:    
+        - lvgl.label.update:
+            id: lbl_hum
+            text:
+              format: "HUM:  %.0f%%"
+              args: [ 'x' ]
+    update_interval: 60s
+  - platform: bh1750
+    name: "BH1750 Illuminance"
+    id: BH1750
+    address: 0x23
+    update_interval: 30s
+    i2c_id: i2c_bus_ext
+    on_value_range:
+      - below: 50.0
+        then:
+          - script.execute: dim_screen
+      - above: 50.0
+        then:
+          - script.execute: bright_screen 
+    on_value: 
+      then:
+        - lvgl.label.update:
+            id: lbl_lux
+            text:
+              format: "LUX:  %f"
+              args: "x"
+
+    
+
+
+display:
+  - platform: ili9xxx
+    id: disp
+    model: S3BOX
+    data_rate: 40MHz
+    invert_colors: false
+    cs_pin: GPIO05
+    dc_pin: GPIO04
+    reset_pin:
+      number: GPIO48
+      inverted: true
+    update_interval: never
+    auto_clear_enabled: false
+    show_test_card: true 
+
+
+    
+    
+
+
+output:
+  - platform: ledc
+    pin: GPIO47
+    id: backlight_pwm     
+
+
+
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    name: "Display Backlight"
+    id: backlight
+    restore_mode: ALWAYS_ON
+
+
+touchscreen:
+  platform: gt911
+  i2c_id: i2c_bus
+  id: touch
+  interrupt_pin: GPIO3
+ 
+  on_touch:
+    - lambda: |-
+          ESP_LOGI("touchscreen on_touch", "x=%d, y=%d, x_raw=%d, y_raw=%0d, x_prev=%d, y_prev=%d, x_org=%d, y_org=%d",
+              touch.x,
+              touch.y,
+              touch.x_raw,
+              touch.y_raw,
+              touch.x_prev,
+              touch.y_prev,
+              touch.x_org,
+              touch.y_org
+              );
+    - light.turn_on: backlight  
+
+  on_update:
+      - lambda: |-
+          for (auto touch: touches)  {
+            //ESP_LOGI("touchscreen on_update", "state=%d x=%d, y=%d, x_prev=%d, y_prev=%d, x_org=%d, y_org=%d", touch.state, touch.x, touch.y,touch.x_prev,touch.y_prev,touch.x_org,touch.y_org);
+            if ((touch.state == 6) && (id(change_page).state)) {
+              if (touch.x_org > touch.x_prev) {
+                ESP_LOGI("touchscreen on_update", "Detected RIGHT to LEFT Swipe in clock area");
+                id(page_prev).execute();
+              } else { 
+                ESP_LOGI("touchscreen on_update", "Detected LEFT to RIGHT Swipe in clock area");
+                id(page_next).execute();
+
+              }
+            }
+          }
+
+
+
+
+lvgl:
+  displays:
+    - disp
+  default_font: icons_50
+  disp_bg_color: black
+  
+  touchscreens:
+    touchscreen_id: touch
+   
+
+
+       
+  pages:
+    - id: main_page
+      bg_color: black
+      outline_color: black
+      widgets:
+        - obj:
+            align: CENTER
+            bg_color: black
+            outline_color: black
+            pad_all: 1
+            width: 320
+            height: 240
+            layout:
+              type: FLEX
+              flex_flow: ROW_WRAP
+              flex_align_cross: CENTER
+            widgets:
+            - label:
+                id: lbl_time
+                text: "00:00"
+                align: CENTER
+                text_align: CENTER
+                text_font: yfont
+                text_color: 0xffffff
+                pad_left: 22
+                outline_color: black
+            - buttonmatrix:
+                id: buttonmatrix
+                outline_color: black
+                align: CENTER
+                width: 313
+                height: 108
+                pad_all: 0
+                pad_column: 3
+                pad_row: 3
+                bg_color: black
+                border_color: black
+                rows:
+                  - buttons:
+                    - id: button1
+                      text: "\U0000f02a" # Light
+                      control:
+                        checkable: true
+                      on_click:
+                        - homeassistant.action:
+                            action: light.toggle
+                            data:
+                              entity_id: light.bedroom_lights
+                        - logger.log:
+                                format: "light button pressed"
+                    - id: button2
+                      text: "\U0000ec18" # heat pump
+                      control:
+                        checkable: true
+                      on_click:
+                        - homeassistant.action:
+                            action: switch.toggle
+                            data:
+                              entity_id: switch.0200000b34c2_ac_power_status
+                        - logger.log:
+                            format: "aircon button pressed" 
+                  - buttons:
+                    - id: button3
+                      text: "\U0000e2b4" # bed light
+                      control:
+                        checkable: true
+                      on_click:
+                        - homeassistant.action:
+                            action: light.toggle
+                            data:
+                              entity_id: light.brilliant_gu10_rgbw
+                        - logger.log:
+                            format: "bedhead Button pressed"
+                    - id: button4
+                      text: "\U0000e828" # electric blanket
+                      control:
+                        checkable: true
+                      on_click:
+                        - homeassistant.action:
+                            action: switch.toggle
+                            data:
+                              entity_id: switch.electric_blankets
+                        - logger.log:
+                            format: "blankets button pressed"         
+    - id: weather_page
+      bg_color: black
+      outline_color: black
+      widgets:
+        - obj:
+            align: CENTER
+            bg_color: black
+            outline_color: black
+            pad_all: 1
+            width: 320
+            height: 240
+            layout:
+              type: FLEX
+              flex_flow: ROW_WRAP
+              flex_align_cross: CENTER
+            widgets:
+            - label:
+                id: lbl_time2
+                text: "00:00"
+                align: CENTER
+                text_align: CENTER
+                text_font: yfont
+                text_color: 0xffffff
+                pad_left: 22
+                outline_color: black
+            - label:
+                id: lbl_temp
+                text: "--.- °C"
+                align: CENTER
+                text_align: CENTER
+                text_font: weather_font
+                text_color: 0xffffff
+                outline_color: black   
+            - label:
+                id: lbl_hum
+                text: "--.- %"
+                align: CENTER
+                text_align: CENTER
+                text_font: weather_font
+                text_color: 0xffffff
+                outline_color: black                      
+                                                                                                                
+    - id: status_page
+      bg_color: black
+      outline_color: black
+      widgets:
+        - obj:
+            align: CENTER
+            bg_color: black
+            outline_color: black
+            pad_all: 1
+            width: 320
+            height: 240
+            layout:
+              type: FLEX
+              flex_flow: ROW_WRAP
+              flex_align_cross: CENTER
+            widgets:
+            - label:
+                id: lbl_time3
+                text: "00:00"
+                align: CENTER
+                text_align: CENTER
+                text_font: yfont
+                text_color: 0xffffff
+                pad_left: 22
+                outline_color: black
+            - label:
+                id: lbl_ip
+                text: "....."
+                text_font: info_font
+                text_color: 0xffffff
+                outline_color: black   
+            - label:
+                id: lbl_lux
+                text: "....."
+                text_font: info_font
+                text_color: 0xffffff
+                outline_color: black                      
+                                                                             
+                                                    
+
+ 
+number:
+  - platform: template
+    name: LVGL Screen timeout
+    optimistic: true
+    id: display_timeout
+    unit_of_measurement: "s"
+    initial_value: 45
+    restore_value: true
+    min_value: 10
+    max_value: 180
+    step: 5
+    mode: box    
+
+script:
+  - id: time_update
+    then:
+      - lvgl.label.update:
+          id: lbl_time
+          text: !lambda |-
+             return id(homeassistant_time).now().strftime("%H:%M");
+      - lvgl.label.update:
+          id: lbl_time2
+          text: !lambda |-
+             return id(homeassistant_time).now().strftime("%H:%M");   
+      - lvgl.label.update:
+          id: lbl_time3
+          text: !lambda |-
+             return id(homeassistant_time).now().strftime("%H:%M");                          
+      - logger.log: "update Time script ran"
+  - id: page_next
+    then:
+      - lvgl.page.next
+  - id: page_prev
+    then:
+      - lvgl.page.previous
+
+  - id: dim_screen
+    then:
+      - light.turn_on:
+          id: backlight
+          brightness: 30%
+      - logger.log: "script: dim to 30%"
+
+  - id: bright_screen
+    then:
+      - light.turn_on:
+          id: backlight
+          brightness: 100%
+      - logger.log: "script: brightness to full"
+        
+
+
+binary_sensor:
+  - platform: homeassistant
+    id: bedroom_light
+    entity_id: light.bedroom_lights
+    publish_initial_state: true
+    on_state:
+      then:
+        lvgl.widget.update:
+          id: button1
+          state:
+            checked: !lambda return x;
+  - platform: homeassistant
+    id: bedhead_light
+    entity_id: light.brilliant_gu10_rgbw
+    publish_initial_state: true
+    on_state:
+      then:
+        lvgl.widget.update:
+          id: button3
+          state:
+            checked: !lambda return x;            
+  - platform: homeassistant
+    id: bedroom_aircon
+    entity_id: switch.0200000b34c2_ac_power_status
+    publish_initial_state: true
+    on_state:
+      then:
+        lvgl.widget.update:
+          id: button2
+          state:
+            checked: !lambda return x;     
+  - platform: homeassistant
+    id: electricblankets
+    entity_id: switch.electric_blankets
+    publish_initial_state: true
+    on_state:
+      then:
+        lvgl.widget.update:
+          id: button4
+          state:
+            checked: !lambda return x;                      
+  - platform: lvgl
+    name: button1
+    widget: button1
+    publish_initial_state: true
+  - platform: lvgl
+    name: button2
+    widget: button2
+    publish_initial_state: true    
+  - platform: lvgl
+    name: button3
+    widget: button3
+    publish_initial_state: true    
+  - platform: lvgl
+    name: button4
+    widget: button4
+    publish_initial_state: true
+  - platform: status
+    name: Status sensor
+
+  - platform: gt911 #use the home button to turn on and off the screen
+    id: home_button
+    index: 0
+    on_press:
+      if:
+        condition:
+          - lvgl.is_paused  
+        then:
+          - logger.log: "LVGL resuming"
+          - lvgl.resume:
+          - lvgl.widget.redraw:
+          - light.turn_on: backlight
+        else: 
+          - logger.log: "LVGL is idle"
+          - light.turn_off: backlight
+          - lvgl.pause:
+  - platform: touchscreen
+    name: change_page_vb
+    id: change_page
+    x_min: 0
+    y_min: 0
+    y_max: 100
+    x_max: 300
+
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: ESP-S3BOX IP Address
+      on_value:
+       then:    
+        - lvgl.label.update:
+            id: lbl_ip
+            text:
+              format: "IP:   %s"
+              args: "x.c_str()"
+    ssid:
+      name: ESP-S3BOX Connected SSID
+    bssid:
+      name: ESP-S3BOX Connected BSSID
+    mac_address:
+      name: ESP-S3BOX Mac Wifi Address
+    dns_address:
+      name: ESP-S3BOX DNS Address      
